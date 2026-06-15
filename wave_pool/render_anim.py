@@ -73,16 +73,27 @@ def main():
     scene = bpy.context.scene
     scene.frame_start, scene.frame_end = F0, F1
     scene.render.fps = FPS
-    scene.render.image_settings.file_format = "FFMPEG"
-    scene.render.ffmpeg.format = "MPEG4"
-    scene.render.ffmpeg.codec = "H264"
+
+    # Prefer a single MP4 where the build still ships FFmpeg output; otherwise
+    # fall back to a PNG sequence (always supported; mux with ffmpeg or the VSE).
     try:
-        scene.render.ffmpeg.constant_rate_factor = "HIGH"
-    except Exception:
-        pass
-    scene.render.filepath = os.path.join(OUT, f"slab_{CLIP.lower()}.mp4")
-    bpy.ops.render.render(animation=True)
-    print("WROTE", scene.render.filepath)
+        scene.render.image_settings.file_format = "FFMPEG"
+        scene.render.ffmpeg.format = "MPEG4"
+        scene.render.ffmpeg.codec = "H264"
+        try:
+            scene.render.ffmpeg.constant_rate_factor = "HIGH"
+        except Exception:
+            pass
+        scene.render.filepath = os.path.join(OUT, f"slab_{CLIP.lower()}.mp4")
+        bpy.ops.render.render(animation=True)
+        print("WROTE", scene.render.filepath)
+    except (TypeError, RuntimeError):
+        scene.render.image_settings.file_format = "PNG"
+        frames = os.path.join(OUT, f"slab_{CLIP.lower()}_frames")
+        os.makedirs(frames, exist_ok=True)
+        scene.render.filepath = os.path.join(frames, "f_")
+        bpy.ops.render.render(animation=True)
+        print("WROTE_FRAMES", frames)
 
 
 main()
