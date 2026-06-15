@@ -13,29 +13,39 @@ This folder ships two complementary, dependency-free add-ons:
 
 # Surf Pool
 
-A modern surfing wave pool. The surface is a single procedural traveling wave
-evaluated each frame from a closed-form function — cheap (no solver/bake), fully
-art-directable, and every wave parameter is a live slider.
+A modern surfing wave pool built as a **kinematic system**: a foil carriage
+sweeps down the line at constant velocity and the wave is *generated from that
+motion* — each row of water carries a crest launched when the foil passed it,
+propagating across the width at the set celerity. So the peel isn't a fudge
+factor; it falls out of the kinematics (**peel rate = celerity / foil speed**).
+
+The wave itself is a **Gerstner (trochoidal)** wave — points are displaced
+horizontally *and* vertically — so as it shoals over the reef and steepens, the
+crest pitches forward and folds into a real **barrel/tube** (a plain height
+field can't overhang). Defaults are tuned for a **heavy barrel**: a ~3 m face
+that throws over with foam at the lip. Still cheap: it's a closed-form function
+evaluated each frame in a `frame_change` handler — no fluid solve, no bake.
 
 Geometry & axes: a long, narrow basin with a deep **foil channel** on one side
 shoaling up to a **reef shelf** on the other. `X` = wave propagation (width),
-`Y` = the line the wave peels along (length). The wave crest is sheared along
-`Y` so the break sweeps down the line as it shoals on the reef.
+`Y` = the line the wave peels along (length).
 
 Install via *Install from Disk…* (`surf_pool.py`), enable **Add Mesh: Surf
 Pool**, then `N-panel > "Surf Pool" tab > Create / Rebuild Surf Pool` and press
-**Play** (or scrub the timeline) to watch it peel — the wave animates from a
-`frame_change` handler, so no baking is needed.
+**Play** to watch the foil run down the line and the barrel peel behind it
+(one ride per cycle).
 
 | Section | Behaviour |
 |---|---|
 | **Basin** | line length, width, water level, walls, grid resolution. Edits need **Rebuild**. |
-| **Wave (live)** | height, wavelength, speed, **peel rate**, crest sharpness, ambient chop, foam. Edit the wave **instantly**. |
+| **Wave (live)** | height, wavelength, **wave celerity**, **foil speed**, **steepness**, **reef steepening**, ambient chop, foam. Edit instantly; the panel shows the resulting peel rate. |
 | **Extras** | water colour, foil carriage, sun. |
 
-Dialing it in: keep **Wavelength** near the **Width** for one clean wall; raise
-**Crest Sharpness** for a steeper, more barreling face; **Peel Rate** controls
-how fast the break runs down the line (0 = closes out everywhere at once).
+Dialing the barrel: heaviness/throw rises with **Wave Height**, **Steepness**
+and **Reef Steepening** and with *shorter* **Wavelength** (the curl needs
+`steepness × amplitude × 2π/wavelength > 1`). Lower **Foil Speed** (relative to
+celerity) makes the wave stand up taller and peel slower; raise it for a faster,
+more drawn-out wall. Use a **higher Width segment count** to resolve the tube.
 
 ---
 

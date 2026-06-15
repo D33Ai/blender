@@ -210,46 +210,56 @@ def _build_water(props, coll):
         mesh.color_attributes.new(name=FOAM_LAYER, type="FLOAT_COLOR", domain="POINT")
     except Exception:
         pass
+    # rest lattice: the kinematic Gerstner solver displaces from these original
+    # (X,Y) each frame, so horizontal motion never drifts/accumulates
+    try:
+        ra = mesh.attributes.new(name="rest_pos", type="FLOAT_VECTOR", domain="POINT")
+        rest = np.empty(len(mesh.vertices) * 3, dtype=np.float64)
+        mesh.vertices.foreach_get("co", rest)
+        ra.data.foreach_set("vector", rest)
+    except Exception:
+        pass
     obj[FLAG] = True
     obj.data.materials.append(_build_material(props))
     return obj
 
 
 def _build_foil(props, coll):
-    """A foil carriage that tracks down the line on the deep (-X) side."""
+    """The foil carriage. Its Y position is set kinematically by the handler;
+    the wave is derived from that position, so the foil *generates* the wave."""
     obj, mesh = _new_mesh_object(OBJ_FOIL, coll)
     bm = bmesh.new()
     bmesh.ops.create_cube(bm, size=1.0)
     bm.to_mesh(mesh)
     bm.free()
     obj.scale = (props.pool_width * 0.10, props.pool_length * 0.05, props.water_level + props.freeboard)
-    x = -props.pool_width / 2.0 + props.pool_width * 0.12
+    x = _foil_x(props)
     obj.location = (x, -props.pool_length / 2.0, (props.water_level + props.freeboard) / 2.0)
-    # drive Y so the carriage travels the line in sync with the wave
-    fps = _fps(bpy.context.scene)
-    per_frame = props.wave_speed / fps
-    L = props.pool_length
-    try:
-        drv = obj.driver_add("location", 1).driver
-        drv.type = "SCRIPTED"
-        var = drv.variables.new()
-        var.name = "f"
-        var.type = "SINGLE_PROP"
-        tgt = var.targets[0]
-        tgt.id_type = "SCENE"
-        tgt.id = bpy.context.scene
-        tgt.data_path = "frame_current"
-        drv.expression = f"({-L/2.0}) + ((f * {per_frame:.6f}) % {L})"
-    except Exception:
-        pass
     return obj
 
 
 # ---------------------------------------------------------------------------
 # Procedural wave — evaluated each frame
 # ---------------------------------------------------------------------------
+def _foil_x(props):
+    return -props.pool_width / 2.0 + props.pool_width * 0.12
+
+
+def foil_state(scene, p):
+    """Kinematic foil: constant-velocity sweep down the line, one ride per cycle.
+    Returns (x_foil, y_foil, t_cycle, v)."""
+    L = p.pool_length
+    v = p.foil_speed if abs(p.foil_speed) > 1e-6 else 1e-6
+    period = abs(L / v)
+    t = scene.frame_current / _fps(scene)
+    tc = (t % period) if period > 0 else t
+    y_foil = -L / 2.0 + v * tc
+    return _foil_x(p), y_foil, tc, v
+
+
 def compute_surface(scene):
-    """Displace the water grid into a single peeling wave + write foam."""
+    """Kinematic Gerstner wave: generated at the moving foil, propagating across
+    the width and peeling down the line, steepening into a barrel on the reef."""
     obj = bpy.data.objects.get(OBJ_WATER)
     if obj is None or not obj.get(FLAG):
         return
@@ -257,48 +267,65 @@ def compute_surface(scene):
     p = getattr(scene, "surf_pool", None)
     if p is None:
         return
-
     n = len(me.vertices)
-    if n == 0:
+    if n == 0 or "rest_pos" not in me.attributes:
         return
-    co = np.empty(n * 3, dtype=np.float64)
-    me.vertices.foreach_get("co", co)
-    co = co.reshape(n, 3)
-    x = co[:, 0]
-    y = co[:, 1]
 
-    t = scene.frame_current / _fps(scene)
+    # displace from the REST lattice each frame (horizontal motion can't drift)
+    rest = np.empty(n * 3, dtype=np.float64)
+    me.attributes["rest_pos"].data.foreach_get("vector", rest)
+    rest = rest.reshape(n, 3)
+    X0 = rest[:, 0]
+    Y0 = rest[:, 1]
+
     half_w = max(p.pool_width / 2.0, 1e-6)
     lam = max(p.wavelength, 1e-3)
+    k = 2.0 * np.pi / lam
+    c = max(p.wave_celerity, 1e-3)
+    omega = k * c
 
-    # shoaling: amplitude grows from the deep channel (-X) toward the reef (+X)
-    xn = np.clip((x + half_w) / (2.0 * half_w), 0.0, 1.0)          # 0..1
-    shoal = 0.35 + 1.25 * xn ** 1.5
+    x_foil, y_foil, tc, v = foil_state(scene, p)
+    foil = bpy.data.objects.get(OBJ_FOIL)
+    if foil is not None:                       # kinematically position the carriage
+        loc = list(foil.location)
+        loc[1] = y_foil
+        foil.location = loc
 
-    # phase: wave propagates +X, sheared along Y so the break peels down the line
-    phase = x - p.wave_speed * t - p.peel_rate * y
-    c = np.cos(2.0 * np.pi * phase / lam)
-    crest = np.clip(0.5 * (1.0 + c), 0.0, 1.0) ** max(p.crest_sharpness, 0.1)
+    # kinematic coupling: a row at Y0 was passed by the foil tau seconds ago, and
+    # the wave it launched has since propagated c*tau across the width.
+    tau = (y_foil - Y0) / v if v != 0 else np.zeros_like(Y0)
+    tau_pos = np.maximum(tau, 0.0)
+    passed = (Y0 <= y_foil + 1e-6).astype(np.float64)
+    reach = x_foil + c * tau_pos                       # how far the front has travelled
+    window = np.clip((reach - X0) / (0.5 * lam), 0.0, 1.0)   # 0 ahead of the front
+    xn = np.clip((X0 + half_w) / (2.0 * half_w), 0.0, 1.0)
+    shoal = 0.4 + 1.4 * xn ** 1.5                       # amplitude grows toward the reef
 
-    z = p.water_level + p.wave_height * shoal * crest
+    active = window * passed
+    A = p.wave_height * shoal * active
+    Q = np.clip(p.steepness + p.reef_steepen * xn, 0.0, 4.0)
+    theta = k * (X0 - x_foil) - omega * tau_pos
 
-    # ambient chop for surface life (kept small)
+    # Gerstner: vertical lift + horizontal pull toward the crest (lets it pitch/curl)
+    dX = -(Q * A) * np.sin(theta)
+    z = p.water_level + A * np.cos(theta)
     if p.ambient_chop > 0.0:
-        z += p.ambient_chop * 0.06 * (
-            np.sin(2.0 * np.pi * (0.7 * x + 0.5 * y) / 3.1 + 2.7 * t)
-            + 0.6 * np.sin(2.0 * np.pi * (0.4 * x - 0.9 * y) / 1.9 - 3.3 * t)
-        )
+        z += p.ambient_chop * 0.05 * np.sin(2.0 * np.pi * (0.5 * X0 + 0.7 * Y0) / 2.6 + 3.0 * tc)
 
+    co = np.empty((n, 3), dtype=np.float64)
+    co[:, 0] = X0 + dX
+    co[:, 1] = Y0
     co[:, 2] = z
     me.vertices.foreach_set("co", co.reshape(-1))
     me.update()
 
-    # foam: where the wave is both peaking and shoaling (i.e. breaking on the reef),
-    # plus a touch on the steep front face of the crest
+    # foam: the curling lip (overhang strength Q*A*k) on the front face, plus
+    # whitewater on the older, already-broken sections behind the foil
     if FOAM_LAYER in me.color_attributes:
-        front = np.clip(-np.sin(2.0 * np.pi * phase / lam), 0.0, 1.0)
-        breaking = np.clip((crest * shoal - 0.9) * 1.6, 0.0, 1.0)
-        foam = np.clip((breaking + 0.4 * front * crest * (xn > 0.45)) * p.foam_amount, 0.0, 1.0)
+        curl = np.clip(Q * A * k - 0.8, 0.0, 1.0)
+        front = np.clip(np.sin(theta), 0.0, 1.0)
+        age = np.clip(tau_pos / 2.5, 0.0, 1.0)
+        foam = np.clip((curl * front + 0.5 * curl + 0.3 * age * xn) * active * p.foam_amount, 0.0, 1.0)
         rgba = np.ones((n, 4), dtype=np.float32)
         rgba[:, 0] = foam
         rgba[:, 1] = foam
@@ -388,27 +415,32 @@ class SurfPoolProps(PropertyGroup):
                                description="Long axis the wave peels along")
     pool_width: FloatProperty(name="Width", default=55.0, min=5.0, soft_max=200.0, unit="LENGTH",
                               description="Short axis the wave propagates across")
-    water_level: FloatProperty(name="Water Level", default=2.0, min=0.2, soft_max=20.0, unit="LENGTH")
+    water_level: FloatProperty(name="Water Level", default=2.5, min=0.2, soft_max=20.0, unit="LENGTH")
     wall_thickness: FloatProperty(name="Wall Thickness", default=0.4, min=0.01, soft_max=5.0, unit="LENGTH")
-    freeboard: FloatProperty(name="Freeboard", default=0.6, min=0.0, soft_max=10.0, unit="LENGTH")
+    freeboard: FloatProperty(name="Freeboard", default=0.8, min=0.0, soft_max=10.0, unit="LENGTH")
     length_segments: IntProperty(name="Segments (Line)", default=220, min=4, soft_max=600,
                                  description="Water grid resolution along the line")
-    width_segments: IntProperty(name="Segments (Width)", default=70, min=4, soft_max=400,
-                                description="Water grid resolution across the width (wave shape detail)")
+    width_segments: IntProperty(name="Segments (Width)", default=96, min=4, soft_max=400,
+                                description="Water grid resolution across the width (resolves the barrel curl)")
 
-    # --- wave (live) ---
-    wave_height: FloatProperty(name="Wave Height", default=1.1, min=0.0, soft_max=8.0, update=_live_update)
-    wavelength: FloatProperty(name="Wavelength", default=42.0, min=1.0, soft_max=300.0, update=_live_update,
-                              description="Distance between crests; keep near the width for one clean wall")
-    wave_speed: FloatProperty(name="Wave Speed", default=7.0, min=-40.0, soft_max=40.0, update=_live_update)
-    peel_rate: FloatProperty(name="Peel Rate", default=0.18, min=-2.0, max=2.0, update=_live_update,
-                             description="Crest shear along the line; higher = faster peel")
-    crest_sharpness: FloatProperty(name="Crest Sharpness", default=2.4, min=0.2, soft_max=8.0, update=_live_update,
-                                   description="Peakiness of the wave face")
-    ambient_chop: FloatProperty(name="Ambient Chop", default=0.3, min=0.0, soft_max=3.0, update=_live_update)
+    # --- wave: kinematic Gerstner (live) ---
+    wave_height: FloatProperty(name="Wave Height", default=1.6, min=0.0, soft_max=8.0, update=_live_update,
+                               description="Crest amplitude before shoaling (heavy = large)")
+    wavelength: FloatProperty(name="Wavelength", default=22.0, min=1.0, soft_max=300.0, update=_live_update,
+                              description="Crest-to-crest distance; shorter steepens the barrel")
+    wave_celerity: FloatProperty(name="Wave Celerity", default=8.0, min=0.1, soft_max=40.0, update=_live_update,
+                                 description="Speed the wave propagates across the width toward the reef")
+    foil_speed: FloatProperty(name="Foil Speed", default=9.0, min=-40.0, soft_max=40.0, update=_live_update,
+                              description="Kinematic speed of the foil carriage down the line; "
+                                          "peel rate = celerity / foil speed")
+    steepness: FloatProperty(name="Steepness", default=1.0, min=0.0, soft_max=3.0, update=_live_update,
+                             description="Gerstner steepness; higher pitches the face forward toward a barrel")
+    reef_steepen: FloatProperty(name="Reef Steepening", default=1.0, min=0.0, soft_max=3.0, update=_live_update,
+                                description="Extra steepness as the wave shoals over the reef (makes it throw/barrel)")
+    ambient_chop: FloatProperty(name="Ambient Chop", default=0.25, min=0.0, soft_max=3.0, update=_live_update)
 
     # --- foam ---
-    foam_amount: FloatProperty(name="Foam", default=1.0, min=0.0, soft_max=3.0, update=_live_update)
+    foam_amount: FloatProperty(name="Foam", default=1.2, min=0.0, soft_max=3.0, update=_live_update)
 
     # --- extras (rebuild) ---
     water_color: FloatVectorProperty(name="Water Color", subtype="COLOR", size=3,
@@ -471,15 +503,18 @@ class SURFPOOL_PT_panel(Panel):
         box.label(text="(basin edits need a Rebuild)", icon="INFO")
 
         box = layout.box()
-        box.label(text="Wave (live)", icon="MOD_WAVE")
+        box.label(text="Wave — kinematic Gerstner (live)", icon="MOD_WAVE")
         col = box.column(align=True)
         col.prop(props, "wave_height")
         col.prop(props, "wavelength")
-        col.prop(props, "wave_speed")
-        col.prop(props, "peel_rate")
-        col.prop(props, "crest_sharpness")
+        col.prop(props, "wave_celerity")
+        col.prop(props, "foil_speed")
+        col.prop(props, "steepness")
+        col.prop(props, "reef_steepen")
         col.prop(props, "ambient_chop")
         col.prop(props, "foam_amount")
+        peel = props.wave_celerity / props.foil_speed if props.foil_speed else 0.0
+        box.label(text=f"Peel rate (celerity / foil) ≈ {peel:.2f}", icon="INFO")
 
         box = layout.box()
         box.label(text="Extras", icon="SETTINGS")
