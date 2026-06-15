@@ -196,17 +196,27 @@ def render_still(path, **kw):
 
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
+    frame = 200
     mod = load_addon()
-    p = build_slab(mod, frame=200)     # mid-cycle: the set is breaking on the reef
+    p = build_slab(mod, frame=frame)
     water_material()
     style_objects()
     add_sky_and_sun()
     L, W, wl = p.pool_length, p.pool_width, p.water_level
 
-    add_camera(loc=(-W * 0.48, -L * 0.30, wl + 1.6),
-               target=(W * 0.20, -L * 0.26, wl + 1.2), lens=40.0)
+    # find where the wave is breaking on the reef at this frame: the caisson whose
+    # pulse has just travelled the full width (c*age == W) is breaking now.
+    xi, yi, _ = mod.caisson_positions(p)
+    tc = (frame / 24.0) % p.firing_period
+    i_break = int(min(max((tc - W / p.wave_celerity) / max(p.firing_delay, 1e-4), 0), len(yi) - 1))
+    yb = float(yi[i_break])
+
+    # Hero: low in the channel, facing the breaking section across the reef
+    add_camera(loc=(-W * 0.48, yb - 4.0, wl + 1.6),
+               target=(W * 0.22, yb + 1.0, wl + 1.1), lens=40.0)
     render_still(os.path.join(OUT, "slab_hero.png"))
 
+    # Scenic: elevated 3/4 down the line showing the caisson array + the peel
     add_camera(loc=(-W * 0.95, -L * 0.60, wl + W * 0.50),
                target=(W * 0.15, -L * 0.05, wl), lens=30.0)
     render_still(os.path.join(OUT, "slab_scenic.png"))
