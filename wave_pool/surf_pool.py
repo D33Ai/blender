@@ -2,22 +2,24 @@
 """
 Surf Pool — a modern surfing wave pool generator for Blender.
 
-Models a Surf-Ranch / Wavegarden-style facility: a long, narrow basin with a
-deep foil channel on one side shoaling up to a reef shelf on the other, and a
-single clean wave that propagates across the width and **peels down the line**,
-breaking (with foam) as it shoals over the reef. A foil carriage tracks along
-the line in sync.
+Models a SurfLoch / Wavebender-style facility: a long, narrow basin with a deep
+caisson channel on one side shoaling up to a reef shelf on the other, and a row
+of **pneumatic caissons** that fire in sequence to launch a single clean wave
+that propagates across the width and **peels down the line**, barreling as it
+shoals over the reef.
 
-Why not the Ocean modifier? That produces a stochastic open-ocean spectrum —
-many chaotic waves — not the single peeling wall a surf pool makes. Instead the
-surface is a procedural traveling wave evaluated per frame from a closed-form
-function: cheap (no fluid bake), fully art-directable, and every parameter is a
-live slider.
+How the wave is made (matching the real tech): each caisson is a chamber that,
+when fired, displaces a slug of water -> a wave pulse that travels across the
+pool. Firing the caissons with a small progressive delay makes the pulses
+superpose into one wave that peels along the line; the delay sets the peel rate.
+On the **Wavebender arc** the caissons sit on a concave curve so the breaking
+line bends like a reef pass. The surface is the closed-form superposition of the
+caisson pulses, evaluated each frame -> cheap (no fluid solve), fully editable.
 
 Install:  Edit > Preferences > Add-ons > Install from Disk... > pick this file,
           then enable "Add Mesh: Surf Pool".
 Use:      3D Viewport > N-panel > "Surf Pool" tab > Create / Rebuild Surf Pool,
-          then press Play (or scrub) to see the wave peel.
+          then press Play (or scrub) to watch the caissons fire and the wave peel.
 
 Target: Blender 5.x (tolerant of 4.2–5.x; attribute/socket writes are guarded).
 """
@@ -25,12 +27,14 @@ Target: Blender 5.x (tolerant of 4.2–5.x; attribute/socket writes are guarded)
 bl_info = {
     "name": "Surf Pool",
     "author": "QSP",
-    "version": (1, 0, 0),
+    "version": (2, 0, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar (N) > Surf Pool",
-    "description": "Generate a modern surfing wave pool with a procedural peeling wave",
+    "description": "Modern surfing wave pool driven by sequenced pneumatic caissons",
     "category": "Add Mesh",
 }
+
+import math
 
 import numpy as np
 import bpy
@@ -41,33 +45,36 @@ from bpy.props import (
 )
 from bpy.types import Operator, Panel, PropertyGroup
 
-# One-click wave personalities. Geometry + wave settings applied then rebuilt.
-PRESETS = {
-    "BEGINNER": {  # mellow rolling wall over a gradual reef
-        "pool_length": 160.0, "pool_width": 60.0, "water_level": 2.0,
-        "reef_ledge": 0.55, "reef_abruptness": 0.15,
-        "wave_height": 0.7, "wavelength": 40.0, "wave_celerity": 7.0, "foil_speed": 8.0,
-        "steepness": 0.5, "reef_steepen": 0.5, "ambient_chop": 0.25, "foam_amount": 0.8},
-    "PERFORMANCE": {  # punchy, peeling barrel
-        "pool_length": 180.0, "pool_width": 55.0, "water_level": 2.5,
-        "reef_ledge": 0.60, "reef_abruptness": 0.45,
-        "wave_height": 1.6, "wavelength": 22.0, "wave_celerity": 8.0, "foil_speed": 9.0,
-        "steepness": 1.0, "reef_steepen": 1.0, "ambient_chop": 0.25, "foam_amount": 1.2},
-    "SLAB": {  # heavy, square slab jacking over a sudden ledge
-        "pool_length": 150.0, "pool_width": 46.0, "water_level": 2.2,
-        "reef_ledge": 0.66, "reef_abruptness": 0.92,
-        "wave_height": 1.7, "wavelength": 18.0, "wave_celerity": 7.0, "foil_speed": 7.5,
-        "steepness": 1.0, "reef_steepen": 1.4, "ambient_chop": 0.12, "foam_amount": 1.5},
-}
-
 COLLECTION = "SurfPool"
 OBJ_FLOOR = "SurfPool_Floor"
 OBJ_WALLS = "SurfPool_Walls"
 OBJ_WATER = "SurfPool_Water"
-OBJ_FOIL = "SurfPool_Foil"
+OBJ_CAISSON = "SurfPool_Caisson_"
 OBJ_SUN = "SurfPool_Sun"
 FOAM_LAYER = "foam"
 FLAG = "is_surf_pool"
+
+# One-click wave personalities. Geometry + wave settings applied then rebuilt.
+PRESETS = {
+    "BEGINNER": {
+        "pool_length": 160.0, "pool_width": 60.0, "water_level": 2.0,
+        "reef_ledge": 0.55, "reef_abruptness": 0.15, "num_caissons": 28, "arc_layout": True,
+        "arc_depth": 4.0, "firing_delay": 0.18, "firing_period": 12.0, "wave_celerity": 7.0,
+        "wave_height": 0.7, "wavelength": 40.0, "steepness": 0.5, "reef_steepen": 0.5,
+        "ambient_chop": 0.25, "foam_amount": 0.8},
+    "PERFORMANCE": {
+        "pool_length": 180.0, "pool_width": 55.0, "water_level": 2.5,
+        "reef_ledge": 0.60, "reef_abruptness": 0.45, "num_caissons": 28, "arc_layout": True,
+        "arc_depth": 6.0, "firing_delay": 0.12, "firing_period": 12.0, "wave_celerity": 8.0,
+        "wave_height": 1.6, "wavelength": 22.0, "steepness": 1.0, "reef_steepen": 1.0,
+        "ambient_chop": 0.25, "foam_amount": 1.2},
+    "SLAB": {
+        "pool_length": 150.0, "pool_width": 46.0, "water_level": 2.2,
+        "reef_ledge": 0.66, "reef_abruptness": 0.92, "num_caissons": 28, "arc_layout": True,
+        "arc_depth": 7.0, "firing_delay": 0.11, "firing_period": 13.0, "wave_celerity": 7.0,
+        "wave_height": 1.7, "wavelength": 18.0, "steepness": 1.0, "reef_steepen": 1.4,
+        "ambient_chop": 0.12, "foam_amount": 1.5},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -100,42 +107,6 @@ def _fps(scene):
     return max(1.0, scene.render.fps / max(1, scene.render.fps_base))
 
 
-def _ensure_collection(context):
-    coll = bpy.data.collections.get(COLLECTION)
-    if coll is None:
-        coll = bpy.data.collections.new(COLLECTION)
-        context.scene.collection.children.link(coll)
-    return coll
-
-
-def _clear():
-    for name in (OBJ_FLOOR, OBJ_WALLS, OBJ_WATER, OBJ_FOIL, OBJ_SUN):
-        obj = bpy.data.objects.get(name)
-        if obj is not None:
-            data = obj.data
-            bpy.data.objects.remove(obj, do_unlink=True)
-            if data is not None and data.users == 0:
-                if isinstance(data, bpy.types.Mesh):
-                    bpy.data.meshes.remove(data)
-                elif isinstance(data, bpy.types.Light):
-                    bpy.data.lights.remove(data)
-    coll = bpy.data.collections.get(COLLECTION)
-    if coll is not None and len(coll.objects) == 0:
-        bpy.data.collections.remove(coll)
-
-
-def _new_mesh_object(name, coll):
-    mesh = bpy.data.meshes.new(name)
-    obj = bpy.data.objects.new(name, mesh)
-    coll.objects.link(obj)
-    return obj, mesh
-
-
-# ---------------------------------------------------------------------------
-# Geometry
-#   X = wave propagation (basin width).  -X = deep foil channel, +X = reef.
-#   Y = the line the wave peels along    (basin length, the long axis).
-# ---------------------------------------------------------------------------
 def _reef_height(props):
     return props.water_level * 0.95  # reef shelf crests just under the surface
 
@@ -153,12 +124,45 @@ def _shoal_profile(props, xn):
 
 
 def _floor_z(props, x):
-    """Deep foil channel on -X, shoaling up to the reef shelf on +X."""
     half_w = props.pool_width / 2.0
     xn = min(max((x + half_w) / max(props.pool_width, 1e-6), 0.0), 1.0)
     return _reef_height(props) * float(_shoal_profile(props, xn))
 
 
+def _ensure_collection(context):
+    coll = bpy.data.collections.get(COLLECTION)
+    if coll is None:
+        coll = bpy.data.collections.new(COLLECTION)
+        context.scene.collection.children.link(coll)
+    return coll
+
+
+def _clear():
+    for obj in [o for o in bpy.data.objects if o.name.startswith("SurfPool_")]:
+        data = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if data is not None and getattr(data, "users", 1) == 0:
+            if isinstance(data, bpy.types.Mesh):
+                bpy.data.meshes.remove(data)
+            elif isinstance(data, bpy.types.Light):
+                bpy.data.lights.remove(data)
+    coll = bpy.data.collections.get(COLLECTION)
+    if coll is not None and len(coll.objects) == 0:
+        bpy.data.collections.remove(coll)
+
+
+def _new_mesh_object(name, coll):
+    mesh = bpy.data.meshes.new(name)
+    obj = bpy.data.objects.new(name, mesh)
+    coll.objects.link(obj)
+    return obj, mesh
+
+
+# ---------------------------------------------------------------------------
+# Geometry
+#   X = wave propagation (basin width).  -X = deep caisson channel, +X = reef.
+#   Y = the line the wave peels along    (basin length, the long axis).
+# ---------------------------------------------------------------------------
 def _build_floor(props, coll):
     obj, mesh = _new_mesh_object(OBJ_FLOOR, coll)
     L, W = props.pool_length, props.pool_width
@@ -209,6 +213,42 @@ def _build_walls(props, coll):
     return obj
 
 
+def caisson_positions(props):
+    """Return (xi, yi, xback) for the caisson array. Straight = constant x;
+    Wavebender arc = a concave parabola so the breaking line bends."""
+    n = max(1, props.num_caissons)
+    L, W = props.pool_length, props.pool_width
+    margin = max(L * 0.04, 3.0)
+    yi = np.linspace(-L / 2.0 + margin, L / 2.0 - margin, n)
+    xback = -W / 2.0 + props.wall_thickness + 1.2
+    if props.arc_layout and n > 1:
+        s = yi / max(L / 2.0, 1e-6)
+        xi = xback + props.arc_depth * (1.0 - s * s)   # center set forward -> concave arc
+    else:
+        xi = np.full(n, xback)
+    return xi, yi, xback
+
+
+def _caisson_base_z(props):
+    return props.water_level * 0.5
+
+
+def _build_caissons(props, coll):
+    xi, yi, _ = caisson_positions(props)
+    n = len(yi)
+    spacing = abs(yi[1] - yi[0]) if n > 1 else props.pool_length
+    cz0 = _caisson_base_z(props)
+    h = props.water_level + props.freeboard
+    for ci in range(n):
+        obj, mesh = _new_mesh_object(f"{OBJ_CAISSON}{ci:02d}", coll)
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0)
+        bm.to_mesh(mesh)
+        bm.free()
+        obj.scale = (2.2, spacing * 0.72, h)
+        obj.location = (float(xi[ci]), float(yi[ci]), cz0)
+
+
 def _build_water(props, coll):
     obj, mesh = _new_mesh_object(OBJ_WATER, coll)
     L, W = props.pool_length, props.pool_width
@@ -235,13 +275,10 @@ def _build_water(props, coll):
     bm.free()
     for poly in mesh.polygons:
         poly.use_smooth = True
-    # foam color attribute (POINT domain) consumed by the material
     try:
         mesh.color_attributes.new(name=FOAM_LAYER, type="FLOAT_COLOR", domain="POINT")
     except Exception:
         pass
-    # rest lattice: the kinematic Gerstner solver displaces from these original
-    # (X,Y) each frame, so horizontal motion never drifts/accumulates
     try:
         ra = mesh.attributes.new(name="rest_pos", type="FLOAT_VECTOR", domain="POINT")
         rest = np.empty(len(mesh.vertices) * 3, dtype=np.float64)
@@ -254,42 +291,20 @@ def _build_water(props, coll):
     return obj
 
 
-def _build_foil(props, coll):
-    """The foil carriage. Its Y position is set kinematically by the handler;
-    the wave is derived from that position, so the foil *generates* the wave."""
-    obj, mesh = _new_mesh_object(OBJ_FOIL, coll)
-    bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=1.0)
-    bm.to_mesh(mesh)
-    bm.free()
-    obj.scale = (props.pool_width * 0.10, props.pool_length * 0.05, props.water_level + props.freeboard)
-    x = _foil_x(props)
-    obj.location = (x, -props.pool_length / 2.0, (props.water_level + props.freeboard) / 2.0)
-    return obj
-
-
 # ---------------------------------------------------------------------------
-# Procedural wave — evaluated each frame
+# Wave engine — superposition of sequenced caisson pulses, per frame
 # ---------------------------------------------------------------------------
-def _foil_x(props):
-    return -props.pool_width / 2.0 + props.pool_width * 0.12
-
-
-def foil_state(scene, p):
-    """Kinematic foil: constant-velocity sweep down the line, one ride per cycle.
-    Returns (x_foil, y_foil, t_cycle, v)."""
-    L = p.pool_length
-    v = p.foil_speed if abs(p.foil_speed) > 1e-6 else 1e-6
-    period = abs(L / v)
+def firing_front(scene, props):
+    """(x, y) of the caisson currently firing this cycle (for camera tracking)."""
+    xi, yi, xback = caisson_positions(props)
+    n = len(yi)
     t = scene.frame_current / _fps(scene)
-    tc = (t % period) if period > 0 else t
-    y_foil = -L / 2.0 + v * tc
-    return _foil_x(p), y_foil, tc, v
+    tc = t % max(props.firing_period, 1e-3)
+    idx = int(np.clip(tc / max(props.firing_delay, 1e-4), 0, n - 1))
+    return float(xi[idx]), float(yi[idx])
 
 
 def compute_surface(scene):
-    """Kinematic Gerstner wave: generated at the moving foil, propagating across
-    the width and peeling down the line, steepening into a barrel on the reef."""
     obj = bpy.data.objects.get(OBJ_WATER)
     if obj is None or not obj.get(FLAG):
         return
@@ -297,14 +312,13 @@ def compute_surface(scene):
     p = getattr(scene, "surf_pool", None)
     if p is None:
         return
-    n = len(me.vertices)
-    if n == 0 or "rest_pos" not in me.attributes:
+    nv = len(me.vertices)
+    if nv == 0 or "rest_pos" not in me.attributes:
         return
 
-    # displace from the REST lattice each frame (horizontal motion can't drift)
-    rest = np.empty(n * 3, dtype=np.float64)
+    rest = np.empty(nv * 3, dtype=np.float64)
     me.attributes["rest_pos"].data.foreach_get("vector", rest)
-    rest = rest.reshape(n, 3)
+    rest = rest.reshape(nv, 3)
     X0 = rest[:, 0]
     Y0 = rest[:, 1]
 
@@ -312,52 +326,53 @@ def compute_surface(scene):
     lam = max(p.wavelength, 1e-3)
     k = 2.0 * np.pi / lam
     c = max(p.wave_celerity, 1e-3)
-    omega = k * c
 
-    x_foil, y_foil, tc, v = foil_state(scene, p)
-    foil = bpy.data.objects.get(OBJ_FOIL)
-    if foil is not None:                       # kinematically position the carriage
-        loc = list(foil.location)
-        loc[1] = y_foil
-        foil.location = loc
-
-    # kinematic coupling: a row at Y0 was passed by the foil tau seconds ago, and
-    # the wave it launched has since propagated c*tau across the width.
-    tau = (y_foil - Y0) / v if v != 0 else np.zeros_like(Y0)
-    tau_pos = np.maximum(tau, 0.0)
-    passed = (Y0 <= y_foil + 1e-6).astype(np.float64)
-    reach = x_foil + c * tau_pos                       # how far the front has travelled
-    window = np.clip((reach - X0) / (0.5 * lam), 0.0, 1.0)   # 0 ahead of the front
     xn = np.clip((X0 + half_w) / (2.0 * half_w), 0.0, 1.0)
-    g = _shoal_profile(p, xn)                          # 0 in channel -> 1 over reef/ledge
-    shoal = 0.25 + 1.75 * g                            # wave is small in the deep, jacks on the ledge
+    g = _shoal_profile(p, xn)
+    shoal = 0.30 + 1.70 * g
+    Q = p.steepness + p.reef_steepen * g
+    depth = np.maximum(p.water_level - _reef_height(p) * g, 0.15)
 
-    active = window * passed
-    A = p.wave_height * shoal * active
-    Q = np.clip(p.steepness + p.reef_steepen * g, 0.0, 5.0)  # steepening concentrated at the ledge
-    theta = k * (X0 - x_foil) - omega * tau_pos
+    xi, yi, xback = caisson_positions(p)
+    n = len(yi)
+    spacing = abs(yi[1] - yi[0]) if n > 1 else p.pool_length
+    sigma_y = max(spacing * 0.85, 1e-3)
+    t = scene.frame_current / _fps(scene)
+    tc = t % max(p.firing_period, 1e-3)
 
-    # Gerstner: vertical lift + horizontal pull toward the crest (lets it pitch/curl)
-    dX = -(Q * A) * np.sin(theta)
-    z = p.water_level + A * np.cos(theta)
+    Z = np.zeros(nv)
+    DX = np.zeros(nv)
+    for ci in range(n):
+        age = tc - ci * p.firing_delay          # seconds since caisson ci fired this cycle
+        if age <= 0.0:
+            continue
+        cx = xi[ci]
+        crest_x = cx + c * age                  # this pulse's crest has travelled c*age across
+        env_y = np.exp(-((Y0 - yi[ci]) / sigma_y) ** 2)        # caisson's band along the line
+        packet = np.exp(-((X0 - crest_x) / (0.7 * lam)) ** 2)  # single travelling crest
+        fwd = np.clip((X0 - cx) / (0.3 * lam), 0.0, 1.0)       # only in front of the caisson
+        amp = p.wave_height * shoal * env_y * packet * fwd
+        theta = k * (X0 - crest_x)
+        Z += amp * np.cos(theta)
+        DX += -(Q * amp) * np.sin(theta)
+
+    z = p.water_level + Z
     if p.ambient_chop > 0.0:
         z += p.ambient_chop * 0.05 * np.sin(2.0 * np.pi * (0.5 * X0 + 0.7 * Y0) / 2.6 + 3.0 * tc)
 
-    co = np.empty((n, 3), dtype=np.float64)
-    co[:, 0] = X0 + dX
+    co = np.empty((nv, 3), dtype=np.float64)
+    co[:, 0] = X0 + DX
     co[:, 1] = Y0
     co[:, 2] = z
     me.vertices.foreach_set("co", co.reshape(-1))
     me.update()
 
-    # foam: the curling lip (overhang strength Q*A*k) on the front face, plus
-    # whitewater on the older, already-broken sections behind the foil
+    # depth-limited breaking: foam where the crest height approaches local depth
     if FOAM_LAYER in me.color_attributes:
-        curl = np.clip(Q * A * k - 0.8, 0.0, 1.0)
-        front = np.clip(np.sin(theta), 0.0, 1.0)
-        age = np.clip(tau_pos / 2.5, 0.0, 1.0)
-        foam = np.clip((curl * front + 0.5 * curl + 0.3 * age * xn) * active * p.foam_amount, 0.0, 1.0)
-        rgba = np.ones((n, 4), dtype=np.float32)
+        crest_h = np.maximum(z - p.water_level, 0.0)
+        break_i = np.clip((crest_h / depth - 0.55) * 2.0, 0.0, 1.0) * p.foam_amount
+        foam = np.clip(break_i, 0.0, 1.0).astype(np.float32)
+        rgba = np.ones((nv, 4), dtype=np.float32)
         rgba[:, 0] = foam
         rgba[:, 1] = foam
         rgba[:, 2] = foam
@@ -365,6 +380,16 @@ def compute_surface(scene):
             me.color_attributes[FOAM_LAYER].data.foreach_set("color", rgba.reshape(-1))
         except Exception:
             pass
+
+    # caisson firing motion: a quick plunge as each fires, in sequence
+    cz0 = _caisson_base_z(p)
+    for ci in range(n):
+        cobj = bpy.data.objects.get(f"{OBJ_CAISSON}{ci:02d}")
+        if cobj is None:
+            continue
+        age = tc - ci * p.firing_delay
+        plunge = math.sin(math.pi * age / 0.6) * 0.5 if 0.0 <= age <= 0.6 else 0.0
+        cobj.location.z = cz0 - plunge
 
 
 @persistent
@@ -395,12 +420,11 @@ def _build_material(props):
     bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
     bsdf.location = (300, 0)
     nt.links.new(bsdf.outputs[0], out.inputs["Surface"])
-
     base = (props.water_color[0], props.water_color[1], props.water_color[2], 1.0)
     _set_input(bsdf, "Base Color", base)
-    _set_input(bsdf, "Roughness", 0.02)
+    _set_input(bsdf, "Roughness", 0.03)
     _set_input(bsdf, "IOR", 1.333)
-    _set_input(bsdf, ("Transmission Weight", "Transmission"), 1.0)
+    _set_input(bsdf, ("Transmission Weight", "Transmission"), 0.6)
 
     attr = nt.nodes.new("ShaderNodeAttribute")
     attr.location = (-300, -180)
@@ -409,22 +433,12 @@ def _build_material(props):
     ramp.location = (-90, -180)
     if "Fac" in attr.outputs:
         nt.links.new(attr.outputs["Fac"], ramp.inputs["Fac"])
-    mix_c = nt.nodes.new("ShaderNodeMix")
-    mix_c.location = (70, 0)
-    mix_c.data_type = "RGBA"
+    mix_c = nt.nodes.new("ShaderNodeMix"); mix_c.location = (70, 0); mix_c.data_type = "RGBA"
     _set_input(mix_c, ("A", "Color1"), base)
     _set_input(mix_c, ("B", "Color2"), (1.0, 1.0, 1.0, 1.0))
     nt.links.new(ramp.outputs["Color"], mix_c.inputs["Factor"])
     if "Result" in mix_c.outputs:
         nt.links.new(mix_c.outputs["Result"], bsdf.inputs["Base Color"])
-    mix_r = nt.nodes.new("ShaderNodeMix")
-    mix_r.location = (70, -260)
-    mix_r.data_type = "FLOAT"
-    _set_input(mix_r, "A", 0.02)
-    _set_input(mix_r, "B", 0.7)
-    nt.links.new(ramp.outputs["Color"], mix_r.inputs["Factor"])
-    if "Result" in mix_r.outputs:
-        nt.links.new(mix_r.outputs["Result"], bsdf.inputs["Roughness"])
     return mat
 
 
@@ -432,7 +446,7 @@ def _build_sun(props, coll):
     light = bpy.data.lights.new(OBJ_SUN, "SUN")
     light.energy = 3.5
     obj = bpy.data.objects.new(OBJ_SUN, light)
-    obj.rotation_euler = (0.5, 0.15, 0.9)
+    obj.rotation_euler = (math.radians(55), math.radians(8), math.radians(150))
     coll.objects.link(obj)
     return obj
 
@@ -441,46 +455,48 @@ def _build_sun(props, coll):
 # Properties
 # ---------------------------------------------------------------------------
 class SurfPoolProps(PropertyGroup):
-    # --- basin (rebuild) ---
-    pool_length: FloatProperty(name="Line Length", default=180.0, min=10.0, soft_max=800.0, unit="LENGTH",
-                               description="Long axis the wave peels along")
-    pool_width: FloatProperty(name="Width", default=55.0, min=5.0, soft_max=200.0, unit="LENGTH",
-                              description="Short axis the wave propagates across")
-    water_level: FloatProperty(name="Water Level", default=2.5, min=0.2, soft_max=20.0, unit="LENGTH")
+    # --- basin & reef (rebuild) ---
+    pool_length: FloatProperty(name="Line Length", default=150.0, min=10.0, soft_max=800.0, unit="LENGTH")
+    pool_width: FloatProperty(name="Width", default=46.0, min=5.0, soft_max=200.0, unit="LENGTH")
+    water_level: FloatProperty(name="Water Level", default=2.2, min=0.2, soft_max=20.0, unit="LENGTH")
     wall_thickness: FloatProperty(name="Wall Thickness", default=0.4, min=0.01, soft_max=5.0, unit="LENGTH")
     freeboard: FloatProperty(name="Freeboard", default=0.8, min=0.0, soft_max=10.0, unit="LENGTH")
-    reef_ledge: FloatProperty(name="Reef Position", default=0.6, min=0.05, max=0.98, update=_live_update,
-                              description="Across-width position (0=channel, 1=reef wall) where the shelf rises")
-    reef_abruptness: FloatProperty(name="Reef Abruptness", default=0.4, min=0.0, max=1.0, update=_live_update,
-                                   description="0 = gradual point-break reef, 1 = sudden ledge (slab) that jacks the wave")
-    length_segments: IntProperty(name="Segments (Line)", default=220, min=4, soft_max=600,
-                                 description="Water grid resolution along the line")
-    width_segments: IntProperty(name="Segments (Width)", default=96, min=4, soft_max=400,
-                                description="Water grid resolution across the width (resolves the barrel curl)")
+    reef_ledge: FloatProperty(name="Reef Position", default=0.66, min=0.05, max=0.98,
+                              description="Across-width position where the reef shelf rises")
+    reef_abruptness: FloatProperty(name="Reef Abruptness", default=0.92, min=0.0, max=1.0,
+                                   description="0 = gradual reef, 1 = sudden ledge (slab) that jacks the wave")
+    length_segments: IntProperty(name="Segments (Line)", default=220, min=4, soft_max=600)
+    width_segments: IntProperty(name="Segments (Width)", default=96, min=4, soft_max=400)
 
-    # --- wave: kinematic Gerstner (live) ---
-    wave_height: FloatProperty(name="Wave Height", default=1.6, min=0.0, soft_max=8.0, update=_live_update,
-                               description="Crest amplitude before shoaling (heavy = large)")
-    wavelength: FloatProperty(name="Wavelength", default=22.0, min=1.0, soft_max=300.0, update=_live_update,
-                              description="Crest-to-crest distance; shorter steepens the barrel")
-    wave_celerity: FloatProperty(name="Wave Celerity", default=8.0, min=0.1, soft_max=40.0, update=_live_update,
-                                 description="Speed the wave propagates across the width toward the reef")
-    foil_speed: FloatProperty(name="Foil Speed", default=9.0, min=-40.0, soft_max=40.0, update=_live_update,
-                              description="Kinematic speed of the foil carriage down the line; "
-                                          "peel rate = celerity / foil speed")
+    # --- caisson array (rebuild) ---
+    num_caissons: IntProperty(name="Caissons", default=28, min=1, soft_max=64,
+                              description="Number of pneumatic caisson wave engines along the back")
+    arc_layout: BoolProperty(name="Wavebender Arc", default=True,
+                             description="Concave arc layout so the breaking line bends like a reef pass")
+    arc_depth: FloatProperty(name="Arc Depth", default=7.0, min=0.0, soft_max=40.0, unit="LENGTH",
+                             description="How far the arc bows; 0 = straight wall")
+
+    # --- firing sequence + wave (live) ---
+    firing_delay: FloatProperty(name="Firing Delay", default=0.11, min=0.0, soft_max=1.0, update=_live_update,
+                                description="Delay between adjacent caissons firing; sets the peel rate")
+    firing_period: FloatProperty(name="Set Interval", default=13.0, min=0.5, soft_max=60.0, update=_live_update,
+                                 description="Seconds between waves (one full firing sweep per cycle)")
+    wave_celerity: FloatProperty(name="Wave Celerity", default=7.0, min=0.1, soft_max=40.0, update=_live_update,
+                                 description="Speed each caisson pulse travels across the width")
+    wave_height: FloatProperty(name="Wave Height", default=1.7, min=0.0, soft_max=8.0, update=_live_update)
+    wavelength: FloatProperty(name="Wavelength", default=18.0, min=1.0, soft_max=300.0, update=_live_update,
+                              description="Crest width of each pulse; shorter steepens the barrel")
     steepness: FloatProperty(name="Steepness", default=1.0, min=0.0, soft_max=3.0, update=_live_update,
-                             description="Gerstner steepness; higher pitches the face forward toward a barrel")
-    reef_steepen: FloatProperty(name="Reef Steepening", default=1.0, min=0.0, soft_max=3.0, update=_live_update,
-                                description="Extra steepness as the wave shoals over the reef (makes it throw/barrel)")
-    ambient_chop: FloatProperty(name="Ambient Chop", default=0.25, min=0.0, soft_max=3.0, update=_live_update)
-
-    # --- foam ---
-    foam_amount: FloatProperty(name="Foam", default=1.2, min=0.0, soft_max=3.0, update=_live_update)
+                             description="Gerstner steepness; higher pitches the face toward a barrel")
+    reef_steepen: FloatProperty(name="Reef Steepening", default=1.4, min=0.0, soft_max=3.0, update=_live_update,
+                                description="Extra steepness as the wave shoals over the reef")
+    ambient_chop: FloatProperty(name="Ambient Chop", default=0.12, min=0.0, soft_max=3.0, update=_live_update)
+    foam_amount: FloatProperty(name="Foam", default=1.5, min=0.0, soft_max=3.0, update=_live_update)
 
     # --- extras (rebuild) ---
     water_color: FloatVectorProperty(name="Water Color", subtype="COLOR", size=3,
                                      default=(0.0, 0.22, 0.30), min=0.0, max=1.0)
-    add_foil: BoolProperty(name="Foil Carriage", default=True)
+    add_caissons: BoolProperty(name="Show Caissons", default=True)
     add_lighting: BoolProperty(name="Add Sun", default=True)
 
 
@@ -500,12 +516,12 @@ class SURFPOOL_OT_create(Operator):
         _build_floor(props, coll)
         _build_walls(props, coll)
         _build_water(props, coll)
-        if props.add_foil:
-            _build_foil(props, coll)
+        if props.add_caissons:
+            _build_caissons(props, coll)
         if props.add_lighting and not any(o.type == "LIGHT" for o in context.scene.objects):
             _build_sun(props, coll)
-        compute_surface(context.scene)            # show the wave at the current frame
-        self.report({"INFO"}, "Surf pool built — press Play to see it peel")
+        compute_surface(context.scene)
+        self.report({"INFO"}, "Surf pool built — press Play to fire the caissons")
         return {"FINISHED"}
 
 
@@ -515,7 +531,7 @@ class SURFPOOL_OT_preset(Operator):
     bl_description = "Apply a wave preset and rebuild the pool"
     bl_options = {"REGISTER", "UNDO"}
 
-    preset: StringProperty(default="PERFORMANCE")
+    preset: StringProperty(default="SLAB")
 
     def execute(self, context):
         vals = PRESETS.get(self.preset)
@@ -567,26 +583,37 @@ class SURFPOOL_PT_panel(Panel):
         sub = box.column(align=True)
         sub.prop(props, "length_segments")
         sub.prop(props, "width_segments")
-        box.label(text="(basin/reef edits need a Rebuild)", icon="INFO")
 
         box = layout.box()
-        box.label(text="Wave — kinematic Gerstner (live)", icon="MOD_WAVE")
+        box.label(text="Caisson Array", icon="MOD_ARRAY")
         col = box.column(align=True)
+        col.prop(props, "num_caissons")
+        col.prop(props, "arc_layout")
+        sub = col.column(align=True)
+        sub.enabled = props.arc_layout
+        sub.prop(props, "arc_depth")
+        box.label(text="(basin/reef/caisson edits need a Rebuild)", icon="INFO")
+
+        box = layout.box()
+        box.label(text="Firing & Wave (live)", icon="MOD_WAVE")
+        col = box.column(align=True)
+        col.prop(props, "firing_delay")
+        col.prop(props, "firing_period")
+        col.prop(props, "wave_celerity")
         col.prop(props, "wave_height")
         col.prop(props, "wavelength")
-        col.prop(props, "wave_celerity")
-        col.prop(props, "foil_speed")
         col.prop(props, "steepness")
         col.prop(props, "reef_steepen")
         col.prop(props, "ambient_chop")
         col.prop(props, "foam_amount")
-        peel = props.wave_celerity / props.foil_speed if props.foil_speed else 0.0
-        box.label(text=f"Peel rate (celerity / foil) ≈ {peel:.2f}", icon="INFO")
+        spacing = (props.pool_length - 2 * max(props.pool_length * 0.04, 3.0)) / max(props.num_caissons - 1, 1)
+        peel = spacing / props.firing_delay if props.firing_delay > 1e-4 else 0.0
+        box.label(text=f"Peel speed ≈ {peel:.1f} m/s along the line", icon="INFO")
 
         box = layout.box()
         box.label(text="Extras", icon="SETTINGS")
         box.prop(props, "water_color")
-        box.prop(props, "add_foil")
+        box.prop(props, "add_caissons")
         box.prop(props, "add_lighting")
 
 

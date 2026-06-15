@@ -56,8 +56,14 @@ def main():
     rs.add_sky_and_sun()
     L, W, wl = p.pool_length, p.pool_width, p.water_level
 
-    def yf(fr):                       # kinematic foil position at this frame
-        return -L / 2.0 + p.foil_speed * (fr / FPS)
+    # camera follows the firing front (the caisson currently firing) down the line
+    xi, yi, _ = mod.caisson_positions(p)
+    y0, spacing = float(yi[0]), (abs(yi[1] - yi[0]) if len(yi) > 1 else L)
+
+    def yf(fr):
+        tc = (fr / FPS) % max(p.firing_period, 1e-3)
+        adv = min(tc / max(p.firing_delay, 1e-4), len(yi) - 1)
+        return y0 + adv * spacing
 
     if CLIP == "POV":
         loc_fn = lambda fr: (W * 0.30, yf(fr) - 9.0, wl + 0.7)

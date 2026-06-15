@@ -36,7 +36,7 @@ def build_slab(mod, frame=240):
     for k, v in mod.PRESETS["SLAB"].items():
         setattr(p, k, v)
     p.add_lighting = False
-    p.add_foil = True
+    p.add_caissons = True
     p.foam_amount = 0.45          # confine whitewater to the lip, keep a blue body
     mod._clear()
     coll = mod._ensure_collection(bpy.context)
@@ -111,15 +111,23 @@ def style_objects():
             b.inputs["Base Color"].default_value = (0.18, 0.30, 0.32, 1.0)
             b.inputs["Roughness"].default_value = 0.85
         floor.data.materials.append(m)
-    for nm, col in (("SurfPool_Walls", (0.5, 0.5, 0.5, 1.0)), ("SurfPool_Foil", (0.05, 0.05, 0.06, 1.0))):
-        o = bpy.data.objects.get(nm)
-        if o is not None:
-            m = bpy.data.materials.new(nm + "_mat"); m.use_nodes = True
-            b = m.node_tree.nodes.get("Principled BSDF")
-            if b:
-                b.inputs["Base Color"].default_value = col
-                b.inputs["Roughness"].default_value = 0.8
-            o.data.materials.append(m)
+    walls = bpy.data.objects.get("SurfPool_Walls")
+    if walls is not None:
+        m = bpy.data.materials.new("Concrete"); m.use_nodes = True
+        b = m.node_tree.nodes.get("Principled BSDF")
+        if b:
+            b.inputs["Base Color"].default_value = (0.5, 0.5, 0.5, 1.0)
+            b.inputs["Roughness"].default_value = 0.85
+        walls.data.materials.append(m)
+    # caissons: one shared dark material
+    cmat = bpy.data.materials.new("Caisson"); cmat.use_nodes = True
+    cb = cmat.node_tree.nodes.get("Principled BSDF")
+    if cb:
+        cb.inputs["Base Color"].default_value = (0.04, 0.04, 0.05, 1.0)
+        cb.inputs["Roughness"].default_value = 0.7
+    for o in bpy.data.objects:
+        if o.name.startswith("SurfPool_Caisson"):
+            o.data.materials.append(cmat)
 
 
 def add_sky_and_sun():
@@ -189,7 +197,7 @@ def render_still(path, **kw):
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     mod = load_addon()
-    p = build_slab(mod)
+    p = build_slab(mod, frame=200)     # mid-cycle: the set is breaking on the reef
     water_material()
     style_objects()
     add_sky_and_sun()
