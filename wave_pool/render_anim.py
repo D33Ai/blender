@@ -22,7 +22,7 @@ spec.loader.exec_module(rs)          # importable: render_slab.main() is __main_
 CLIP = os.environ.get("SURF_CLIP", "TRACK").upper()
 OUT = rs.OUT
 FPS = 24
-F0, F1 = 200, 259                    # ~2.5 s; foil sweeps the mid-pool section
+F0, F1 = 200, 232                    # the break sweeps the line over this window
 
 
 def keyframe_camera(p, loc_fn, tgt_fn, lens):
@@ -56,23 +56,25 @@ def main():
     rs.add_sky_and_sun()
     L, W, wl = p.pool_length, p.pool_width, p.water_level
 
-    # camera follows the firing front (the caisson currently firing) down the line
+    # camera follows the BREAK point on the reef (where the wave is barreling) as
+    # it peels down the line: caisson i breaks at the reef ~W/celerity after firing
     xi, yi, _ = mod.caisson_positions(p)
     y0, spacing = float(yi[0]), (abs(yi[1] - yi[0]) if len(yi) > 1 else L)
 
-    def yf(fr):
+    def ybreak(fr):
         tc = (fr / FPS) % max(p.firing_period, 1e-3)
-        adv = min(tc / max(p.firing_delay, 1e-4), len(yi) - 1)
-        return y0 + adv * spacing
+        ib = (tc - W / p.wave_celerity) / max(p.firing_delay, 1e-4)
+        ib = min(max(ib, 0.0), len(yi) - 1)
+        return y0 + ib * spacing
 
     if CLIP == "POV":
-        loc_fn = lambda fr: (W * 0.30, yf(fr) - 9.0, wl + 0.7)
-        tgt_fn = lambda fr: (W * 0.20, yf(fr) + 7.0, wl + 0.5)
+        loc_fn = lambda fr: (W * 0.30, ybreak(fr) - 9.0, wl + 0.7)
+        tgt_fn = lambda fr: (W * 0.20, ybreak(fr) + 7.0, wl + 0.5)
         lens = 28.0
-    else:  # TRACK
-        loc_fn = lambda fr: (-W * 0.50, yf(fr) - 14.0, wl + 1.7)
-        tgt_fn = lambda fr: (W * 0.18, yf(fr) - 6.0, wl + 1.1)
-        lens = 38.0
+    else:  # TRACK — elevated 3/4 trailing the peel, looking at the reef break
+        loc_fn = lambda fr: (-W * 0.18, ybreak(fr) - 16.0, wl + 5.0)
+        tgt_fn = lambda fr: (W * 0.40, ybreak(fr) + 2.0, wl + 0.6)
+        lens = 34.0
     keyframe_camera(p, loc_fn, tgt_fn, lens)
 
     rs.setup_render(samples=40, res=(960, 540), exposure=-1.1)
