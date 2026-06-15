@@ -1,0 +1,176 @@
+{
+  "scaling": [
+    {
+      "N": 500,
+      "solve_s": 0.0305260500000486,
+      "status": "optimal",
+      "obj": 0.07171805278483562
+    },
+    {
+      "N": 1000,
+      "solve_s": 0.045802105999996456,
+      "status": "optimal",
+      "obj": 0.06097886830948913
+    },
+    {
+      "N": 1500,
+      "solve_s": 0.07087213700003758,
+      "status": "optimal",
+      "obj": 0.04786963491108488
+    },
+    {
+      "N": 2000,
+      "solve_s": 0.10415721199990458,
+      "status": "optimal",
+      "obj": 0.03136766011927044
+    }
+  ],
+  "exact_validation": [
+    {
+      "N": 160,
+      "K": 30,
+      "gamma": 8.0,
+      "relax_bound": 0.0622864401779309,
+      "exact_opt": 0.06199515020589013,
+      "polished": 0.061571598166540197,
+      "relax_looseness_pct": 0.4698592891111217,
+      "true_heuristic_gap_pct": 0.683201892314622,
+      "exact_names": 30,
+      "bb_seconds": 1.3901944960000492,
+      "proven_optimal": true,
+      "status": "optimal"
+    },
+    {
+      "N": 200,
+      "K": 25,
+      "gamma": 8.0,
+      "relax_bound": 0.05927512918874333,
+      "exact_opt": 0.05902596137336265,
+      "polished": 0.05834794570288957,
+      "relax_looseness_pct": 0.4221325829910601,
+      "true_heuristic_gap_pct": 1.1486736593485678,
+      "exact_names": 25,
+      "bb_seconds": 1.2192284090000385,
+      "proven_optimal": true,
+      "status": "optimal"
+    },
+    {
+      "N": 200,
+      "K": 30,
+      "gamma": 25.0,
+      "relax_bound": 0.004738866753078222,
+      "exact_opt": 0.004355706023677783,
+      "polished": 0.002688122365555528,
+      "relax_looseness_pct": 8.79675366789133,
+      "true_heuristic_gap_pct": 38.28503689315135,
+      "exact_names": 30,
+      "bb_seconds": 2.1221014710000645,
+      "proven_optimal": true,
+      "status": "optimal"
+    }
+  ],
+  "exact_scaling": [
+    {
+      "N": 80,
+      "K": 20,
+      "bb_seconds": 1.3373228659999086,
+      "names": 20,
+      "proven_optimal": true
+    },
+    {
+      "N": 120,
+      "K": 20,
+      "bb_seconds": 1.0442031349999752,
+      "names": 20,
+      "proven_optimal": true
+    },
+    {
+      "N": 160,
+      "K": 20,
+      "bb_seconds": 4.127543349000007,
+      "names": 20,
+      "proven_optimal": true
+    },
+    {
+      "N": 200,
+      "K": 25,
+      "bb_seconds": 1.8545211399999744,
+      "names": 25,
+      "proven_optimal": true
+    },
+    {
+      "N": 240,
+      "K": 30,
+      "bb_seconds": 1.5624647399999958,
+      "names": 30,
+      "proven_optimal": true
+    }
+  ],
+  "main": {
+    "val_relaxed": 0.024161626085001022,
+    "obj_polished": 0.022611679725222277,
+    "gap_pct": 6.414909138673062,
+    "names_held": 80,
+    "income": 0.08401081436439128,
+    "risk": 0.0023434663239243997,
+    "ann_vol_pct": 4.840936194502464,
+    "turnover": 1.8933333333333335,
+    "dur": 5.563717073239898,
+    "hy_pct": 39.75,
+    "lot_feasible": true,
+    "lot_drift_bps": 0.2752345894098743,
+    "t_relax": 0.06519932300000164,
+    "t_polish": 0.05963286300004711
+  },
+  "frontier": [
+    {
+      "gamma": 5,
+      "income_pct": 8.610668865730368,
+      "vol_pct": 5.043247596066889,
+      "names": 80,
+      "gap_pct": 0.8626428163136379
+    },
+    {
+      "gamma": 10,
+      "income_pct": 8.56245213402409,
+      "vol_pct": 4.9396256081544765,
+      "names": 80,
+      "gap_pct": 1.4435549590454142
+    },
+    {
+      "gamma": 25,
+      "income_pct": 8.401081436439128,
+      "vol_pct": 4.840936194502464,
+      "names": 80,
+      "gap_pct": 6.414909138673062
+    },
+    {
+      "gamma": 50,
+      "income_pct": 8.178138102699787,
+      "vol_pct": 4.770297560549248,
+      "names": 80,
+      "gap_pct": 8.654401402676951
+    },
+    {
+      "gamma": 100,
+      "income_pct": 7.94156960239177,
+      "vol_pct": 4.7405312599375184,
+      "names": 80,
+      "gap_pct": 3.884739255469336
+    },
+    {
+      "gamma": 250,
+      "income_pct": 7.486655442017071,
+      "vol_pct": 4.6954015805763385,
+      "names": 80,
+      "gap_pct": 3.0807124260196033
+    }
+  ],
+  "notes": {
+    "np_hard": "cardinality-constrained mean-variance is NP-hard (Bienstock 1996)",
+    "method": "convex relaxation (provable bound) + relax-and-polish (feasible)",
+    "exact_method": "binary-indicator MIQP via SCIP branch & bound (proven optimal at tractable N)",
+    "gap_decomposition": "reported frontier gap = relaxation looseness + true heuristic gap; exact MIQP shows it is dominated by relaxation looseness",
+    "exact_needs": "Gurobi/MOSEK MIQP for proven optimality at N>=1500 scale"
+  }
+}
