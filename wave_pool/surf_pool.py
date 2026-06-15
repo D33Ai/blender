@@ -37,9 +37,28 @@ import bpy
 import bmesh
 from bpy.app.handlers import persistent
 from bpy.props import (
-    BoolProperty, FloatProperty, IntProperty, FloatVectorProperty, PointerProperty,
+    BoolProperty, FloatProperty, IntProperty, FloatVectorProperty, PointerProperty, StringProperty,
 )
 from bpy.types import Operator, Panel, PropertyGroup
+
+# One-click wave personalities. Geometry + wave settings applied then rebuilt.
+PRESETS = {
+    "BEGINNER": {  # mellow rolling wall over a gradual reef
+        "pool_length": 160.0, "pool_width": 60.0, "water_level": 2.0,
+        "reef_ledge": 0.55, "reef_abruptness": 0.15,
+        "wave_height": 0.7, "wavelength": 40.0, "wave_celerity": 7.0, "foil_speed": 8.0,
+        "steepness": 0.5, "reef_steepen": 0.5, "ambient_chop": 0.25, "foam_amount": 0.8},
+    "PERFORMANCE": {  # punchy, peeling barrel
+        "pool_length": 180.0, "pool_width": 55.0, "water_level": 2.5,
+        "reef_ledge": 0.60, "reef_abruptness": 0.45,
+        "wave_height": 1.6, "wavelength": 22.0, "wave_celerity": 8.0, "foil_speed": 9.0,
+        "steepness": 1.0, "reef_steepen": 1.0, "ambient_chop": 0.25, "foam_amount": 1.2},
+    "SLAB": {  # heavy, square slab jacking over a sudden ledge
+        "pool_length": 150.0, "pool_width": 46.0, "water_level": 2.2,
+        "reef_ledge": 0.66, "reef_abruptness": 0.92,
+        "wave_height": 1.7, "wavelength": 18.0, "wave_celerity": 7.0, "foil_speed": 7.5,
+        "steepness": 1.0, "reef_steepen": 1.4, "ambient_chop": 0.12, "foam_amount": 1.5},
+}
 
 COLLECTION = "SurfPool"
 OBJ_FLOOR = "SurfPool_Floor"
@@ -118,15 +137,26 @@ def _new_mesh_object(name, coll):
 #   Y = the line the wave peels along    (basin length, the long axis).
 # ---------------------------------------------------------------------------
 def _reef_height(props):
-    return props.water_level * 0.92  # reef shelf crests just under the surface
+    return props.water_level * 0.95  # reef shelf crests just under the surface
+
+
+def _shoal_profile(props, xn):
+    """0 in the deep channel rising to 1 over the reef. A logistic centred on
+    the reef position whose sharpness is the abruptness: low = gradual reef,
+    high = a sudden ledge (slab). Works for scalars and numpy arrays."""
+    edge = props.reef_ledge
+    sharp = 1.5 + 30.0 * props.reef_abruptness
+    g = 1.0 / (1.0 + np.exp(-sharp * (xn - edge)))
+    g0 = 1.0 / (1.0 + np.exp(-sharp * (0.0 - edge)))
+    g1 = 1.0 / (1.0 + np.exp(-sharp * (1.0 - edge)))
+    return np.clip((g - g0) / max(g1 - g0, 1e-6), 0.0, 1.0)
 
 
 def _floor_z(props, x):
     """Deep foil channel on -X, shoaling up to the reef shelf on +X."""
     half_w = props.pool_width / 2.0
-    xn = (x + half_w) / max(props.pool_width, 1e-6)   # 0 at -X (deep) .. 1 at +X (reef)
-    xn = np.clip(xn, 0.0, 1.0)
-    return _reef_height(props) * (xn ** 1.6)
+    xn = min(max((x + half_w) / max(props.pool_width, 1e-6), 0.0), 1.0)
+    return _reef_height(props) * float(_shoal_profile(props, xn))
 
 
 def _build_floor(props, coll):
@@ -299,11 +329,12 @@ def compute_surface(scene):
     reach = x_foil + c * tau_pos                       # how far the front has travelled
     window = np.clip((reach - X0) / (0.5 * lam), 0.0, 1.0)   # 0 ahead of the front
     xn = np.clip((X0 + half_w) / (2.0 * half_w), 0.0, 1.0)
-    shoal = 0.4 + 1.4 * xn ** 1.5                       # amplitude grows toward the reef
+    g = _shoal_profile(p, xn)                          # 0 in channel -> 1 over reef/ledge
+    shoal = 0.25 + 1.75 * g                            # wave is small in the deep, jacks on the ledge
 
     active = window * passed
     A = p.wave_height * shoal * active
-    Q = np.clip(p.steepness + p.reef_steepen * xn, 0.0, 4.0)
+    Q = np.clip(p.steepness + p.reef_steepen * g, 0.0, 5.0)  # steepening concentrated at the ledge
     theta = k * (X0 - x_foil) - omega * tau_pos
 
     # Gerstner: vertical lift + horizontal pull toward the crest (lets it pitch/curl)
@@ -418,6 +449,10 @@ class SurfPoolProps(PropertyGroup):
     water_level: FloatProperty(name="Water Level", default=2.5, min=0.2, soft_max=20.0, unit="LENGTH")
     wall_thickness: FloatProperty(name="Wall Thickness", default=0.4, min=0.01, soft_max=5.0, unit="LENGTH")
     freeboard: FloatProperty(name="Freeboard", default=0.8, min=0.0, soft_max=10.0, unit="LENGTH")
+    reef_ledge: FloatProperty(name="Reef Position", default=0.6, min=0.05, max=0.98, update=_live_update,
+                              description="Across-width position (0=channel, 1=reef wall) where the shelf rises")
+    reef_abruptness: FloatProperty(name="Reef Abruptness", default=0.4, min=0.0, max=1.0, update=_live_update,
+                                   description="0 = gradual point-break reef, 1 = sudden ledge (slab) that jacks the wave")
     length_segments: IntProperty(name="Segments (Line)", default=220, min=4, soft_max=600,
                                  description="Water grid resolution along the line")
     width_segments: IntProperty(name="Segments (Width)", default=96, min=4, soft_max=400,
@@ -474,6 +509,27 @@ class SURFPOOL_OT_create(Operator):
         return {"FINISHED"}
 
 
+class SURFPOOL_OT_preset(Operator):
+    bl_idname = "surfpool.preset"
+    bl_label = "Apply Surf Preset"
+    bl_description = "Apply a wave preset and rebuild the pool"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: StringProperty(default="PERFORMANCE")
+
+    def execute(self, context):
+        vals = PRESETS.get(self.preset)
+        if not vals:
+            self.report({"WARNING"}, f"Unknown preset: {self.preset}")
+            return {"CANCELLED"}
+        props = context.scene.surf_pool
+        for key, value in vals.items():
+            setattr(props, key, value)
+        bpy.ops.surfpool.create()
+        self.report({"INFO"}, f"{self.preset.title()} preset applied")
+        return {"FINISHED"}
+
+
 # ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
@@ -487,10 +543,18 @@ class SURFPOOL_PT_panel(Panel):
     def draw(self, context):
         layout = self.layout
         props = context.scene.surf_pool
+
+        box = layout.box()
+        box.label(text="Presets", icon="PRESET")
+        row = box.row(align=True)
+        row.operator("surfpool.preset", text="Beginner").preset = "BEGINNER"
+        row.operator("surfpool.preset", text="Performance").preset = "PERFORMANCE"
+        row.operator("surfpool.preset", text="Slab").preset = "SLAB"
+
         layout.operator("surfpool.create", icon="MOD_WAVE")
 
         box = layout.box()
-        box.label(text="Basin", icon="MESH_GRID")
+        box.label(text="Basin & Reef", icon="MESH_GRID")
         col = box.column(align=True)
         col.prop(props, "pool_length")
         col.prop(props, "pool_width")
@@ -498,9 +562,12 @@ class SURFPOOL_PT_panel(Panel):
         col.prop(props, "wall_thickness")
         col.prop(props, "freeboard")
         sub = box.column(align=True)
+        sub.prop(props, "reef_ledge")
+        sub.prop(props, "reef_abruptness")
+        sub = box.column(align=True)
         sub.prop(props, "length_segments")
         sub.prop(props, "width_segments")
-        box.label(text="(basin edits need a Rebuild)", icon="INFO")
+        box.label(text="(basin/reef edits need a Rebuild)", icon="INFO")
 
         box = layout.box()
         box.label(text="Wave — kinematic Gerstner (live)", icon="MOD_WAVE")
@@ -529,6 +596,7 @@ class SURFPOOL_PT_panel(Panel):
 _classes = (
     SurfPoolProps,
     SURFPOOL_OT_create,
+    SURFPOOL_OT_preset,
     SURFPOOL_PT_panel,
 )
 

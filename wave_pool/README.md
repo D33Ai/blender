@@ -41,6 +41,17 @@ Pool**, then `N-panel > "Surf Pool" tab > Create / Rebuild Surf Pool` and press
 | **Wave (live)** | height, wavelength, **wave celerity**, **foil speed**, **steepness**, **reef steepening**, ambient chop, foam. Edit instantly; the panel shows the resulting peel rate. |
 | **Extras** | water colour, foil carriage, sun. |
 
+**Presets** (one click — set everything and rebuild):
+
+- **Beginner** — mellow rolling wall over a gradual reef.
+- **Performance** — punchy, peeling barrel (the standard heavy-barrel tune).
+- **Slab** — a heavy, square slab: flat deep water hits a **sudden ledge**
+  (`Reef Abruptness` ≈ 0.9) and jacks into a thick ~3 m barrel that draws below
+  sea level over the reef. Think Shipstern / Cyclops.
+
+The reef shape is set by **Reef Position** (where across the width the shelf
+rises) and **Reef Abruptness** (gradual point-break reef → sudden slab ledge).
+
 Dialing the barrel: heaviness/throw rises with **Wave Height**, **Steepness**
 and **Reef Steepening** and with *shorter* **Wavelength** (the curl needs
 `steepness × amplitude × 2π/wavelength > 1`). Lower **Foil Speed** (relative to
