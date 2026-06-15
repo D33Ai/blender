@@ -1,3 +1,44 @@
+# Blender wave-pool add-ons
+
+This folder ships two complementary, dependency-free add-ons:
+
+- **Surf Pool** (`surf_pool.py`) — a *modern surfing wave pool* (Surf-Ranch /
+  Wavegarden style): one clean wave that propagates across the width and **peels
+  down the line**, breaking over a shaped reef, with a foil carriage tracking
+  along. Procedural traveling wave (no fluid bake). **Use this for surfing.**
+- **Wave Pool** (`wave_pool.py`) — a generic recreational wave pool using the
+  built-in Ocean modifier (directional swell + foam over a sloped beach).
+
+---
+
+# Surf Pool
+
+A modern surfing wave pool. The surface is a single procedural traveling wave
+evaluated each frame from a closed-form function — cheap (no solver/bake), fully
+art-directable, and every wave parameter is a live slider.
+
+Geometry & axes: a long, narrow basin with a deep **foil channel** on one side
+shoaling up to a **reef shelf** on the other. `X` = wave propagation (width),
+`Y` = the line the wave peels along (length). The wave crest is sheared along
+`Y` so the break sweeps down the line as it shoals on the reef.
+
+Install via *Install from Disk…* (`surf_pool.py`), enable **Add Mesh: Surf
+Pool**, then `N-panel > "Surf Pool" tab > Create / Rebuild Surf Pool` and press
+**Play** (or scrub the timeline) to watch it peel — the wave animates from a
+`frame_change` handler, so no baking is needed.
+
+| Section | Behaviour |
+|---|---|
+| **Basin** | line length, width, water level, walls, grid resolution. Edits need **Rebuild**. |
+| **Wave (live)** | height, wavelength, speed, **peel rate**, crest sharpness, ambient chop, foam. Edit the wave **instantly**. |
+| **Extras** | water colour, foil carriage, sun. |
+
+Dialing it in: keep **Wavelength** near the **Width** for one clean wall; raise
+**Crest Sharpness** for a steeper, more barreling face; **Peel Rate** controls
+how fast the break runs down the line (0 = closes out everywhere at once).
+
+---
+
 # Wave Pool — Blender add-on
 
 A cost-effective, fully editable wave-pool generator. It builds a complete pool
