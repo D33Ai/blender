@@ -58,6 +58,26 @@ and **Reef Steepening** and with *shorter* **Wavelength** (the curl needs
 celerity) makes the wave stand up taller and peel slower; raise it for a faster,
 more drawn-out wall. Use a **higher Width segment count** to resolve the tube.
 
+## Rendering (headless)
+
+Two scripts reproduce the showcase renders with a portable/installed Blender 5.x
+(no GUI needed). They load the add-on, apply the **Slab** preset, and set up a
+deep-blue water material, a Nishita sky + raking sun, and cameras:
+
+```
+# stills -> ./surf_render/slab_hero.png, slab_scenic.png
+blender --background --factory-startup --python render_slab.py
+
+# animation (one clip per run) -> ./surf_render/slab_track.mp4 / slab_pov.mp4
+SURF_CLIP=TRACK blender --background --factory-startup --python render_anim.py
+SURF_CLIP=POV   blender --background --factory-startup --python render_anim.py
+```
+
+`TRACK` trails the peel from the channel; `POV` rides inside the barrel. The
+wave animates per frame via the add-on's `frame_change` handler — still no bake.
+Set `SURF_OUT` to change the output folder. Defaults are kept light (960×540,
+40 samples + denoise) so CPU renders stay quick; raise them for final quality.
+
 ---
 
 # Wave Pool — Blender add-on
