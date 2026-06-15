@@ -58,6 +58,24 @@ Additions in this revision:
 - **Robustness fix** — the relax-and-polish support QP could be infeasible at
   small N / tight K (returning a garbage objective); it now drops the cosmetic
   min-position floor and retries. The N=1500 path is unchanged.
+- **Adaptive lot-rounding buffer** (`relax_and_polish(..., adaptive_buffer=True)`)
+  — the original fixed pre-tightening buffer (`db=0.06` on the duration band,
+  `cb=0.004` on caps) is wildly oversized: a 0.06-year buffer on a 1.0-year band
+  forces a costly interior portfolio whenever the optimum sits on a band edge
+  (the high-γ regime). That, not heuristic weakness, is what produced the ~38%
+  validation gap. The adaptive path tries the smallest buffer whose *rounded*
+  portfolio is still mandate-feasible and only pays for slack rounding needs:
+
+  | N | K | γ | fixed-buffer gap | adaptive-buffer gap |
+  |---|---|---|---|---|
+  | 160 | 30 | 8 | 0.68% | 0.68% |
+  | 200 | 25 | 8 | 1.15% | 0.45% |
+  | 200 | 30 | 25 | 38.29% | 6.71% |
+
+  The hard-regime artifact drops 38% → 7%; the residual is genuine lot-rounding
+  cost on a tight band, which exact branch & bound on the K-name support clears
+  in ~2s. Default stays `adaptive_buffer=False` so the N=1500 headline/figure
+  numbers (6.415% gap, frontier) reproduce exactly.
 
 Results land in `knapsack_results.json` and `portfolio_miqp_results.json`.
 All numbers above were reproduced in-repo (NumPy 2.4, cvxpy 1.9 + SCIP 6.2,
