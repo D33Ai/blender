@@ -43,7 +43,7 @@ def build_slab(mod, frame=240):
     mod._build_floor(p, coll)
     mod._build_walls(p, coll)
     mod._build_water(p, coll)
-    mod._build_foil(p, coll)
+    mod._build_caissons(p, coll)
     scene.frame_set(frame)
     mod.compute_surface(scene)
     return p
