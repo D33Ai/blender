@@ -36,14 +36,15 @@ def keyframe_camera(p, loc_fn, tgt_fn, lens):
     con.track_axis = "TRACK_NEGATIVE_Z"
     con.up_axis = "UP_Y"
     bpy.context.scene.camera = cam
+    # linear motion to stay in sync with the constant-velocity foil (set on the
+    # preference so we avoid the 5.x layered-action fcurve API entirely)
+    try:
+        bpy.context.preferences.edit.keyframe_new_interpolation_type = "LINEAR"
+    except Exception:
+        pass
     for fr in (F0, F1):
         cam.location = loc_fn(fr); cam.keyframe_insert("location", frame=fr)
         empty.location = tgt_fn(fr); empty.keyframe_insert("location", frame=fr)
-    for obj in (cam, empty):
-        if obj.animation_data and obj.animation_data.action:
-            for fc in obj.animation_data.action.fcurves:
-                for kp in fc.keyframe_points:
-                    kp.interpolation = "LINEAR"
 
 
 def main():
